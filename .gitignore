@@ -1,0 +1,29 @@
+# Project-specific Data & Models
+qwen2.5-1.5b-sft-math-merged/
+grpo_output_local/
+
+# Virtual Environment (uv / pip)
+.venv/
+venv/
+env/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# TensorBoard Logs
+runs/
+logs/
+*.tfevents.*
+
+# Hugging Face Cache (just in case you download models locally)
+.huggingface/
+hf_cache/
+
+# OS & Editor Files
+.DS_Store
+.vscode/
+.idea/
+*.swp

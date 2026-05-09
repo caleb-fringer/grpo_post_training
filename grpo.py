@@ -18,6 +18,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter  # <-- Added TensorBoard import
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
+from tqdm import tqdm
 
 try:
     from peft import PeftModel
@@ -254,7 +255,7 @@ class GRPOTrainer:
         
         # 1. Print compact payload to console
         compact = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in payload.items()}
-        print(compact)
+        tqdm.write(str(compact))
         
         # 2. Push scalars to TensorBoard
         for k, v in payload.items():
@@ -331,11 +332,22 @@ class GRPOTrainer:
         accum_per_fn = collections.defaultdict(float)
         accum_reward = 0.0
 
+        # === MULTI-LEVEL PROGRESS BARS ===
+        # position=0 keeps this bar anchored at the top
+        pbar_main = tqdm(total=total_optim_steps, desc="Overall Training", position=0, unit="step")
+        # position=1 puts this bar underneath. leave=False clears it when training finishes
+        pbar_inner = tqdm(total=accum, desc="Current Step Phase", position=1, leave=False, unit="micro")
+
+
         for epoch, rows in self._iter_batches():
             prompts = [r["prompt"] for r in rows]
             answers = [r["answer"] for r in rows]
 
             enc = self._tokenize_prompts(prompts)
+
+            # Phase: Generation
+            pbar_inner.set_description("Phase: Generating")
+
             full_ids, completion_ids, completion_mask, full_mask, P = self._generate_group(
                 enc["input_ids"], enc["attention_mask"]
             )
@@ -346,14 +358,24 @@ class GRPOTrainer:
             )
             answers_rep = [a for a in answers for _ in range(G)]
 
+            # Phase: Scoring
+            pbar_inner.update(1)
+            pbar_inner.set_description("Phase: Scoring")
             rewards, per_fn = self._score(completion_texts, {"answer": answers_rep})
             advantages = self._group_advantages(rewards, G)
 
+            # Phase: Forward & Loss
+            pbar_inner.update(1)
+            pbar_inner.set_description("Phase: Forward & Loss")
             new_logp = self._token_logprobs(self.model, full_ids, full_mask, P)
             old_logp = new_logp.detach()
             ref_logp = self._ref_logprobs(full_ids, full_mask, P)
 
             loss, metrics = self._grpo_loss(new_logp, old_logp, ref_logp, advantages, completion_mask)
+
+            # Phase: Backprop
+            pbar_inner.update(1)
+            pbar_inner.set_description("Phase: Backprop")
             (loss / accum).backward()
             micro += 1
 
@@ -361,12 +383,25 @@ class GRPOTrainer:
             for k, v in per_fn.items(): accum_per_fn[k] += v / accum
             accum_reward += rewards.mean().item() / accum
 
+            pbar_inner.update(1)
             if micro % accum == 0:
+                pbar_inner.update(1)
+                pbar_inner.set_description("Phase: Optimizing")
                 grad_norm = torch.nn.utils.clip_grad_norm_(trainable, cfg.max_grad_norm)
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
                 global_step += 1
+
+                # Advance the outer bar by 1 full step
+                pbar_main.update(1)
+                pbar_main.set_postfix({
+                    "reward": f"{accum_reward:.3f}", 
+                    "kl": f"{accum_metrics['metrics/kl']:.3f}"
+                })
+                
+                # Reset the inner bar for the next optimization step
+                pbar_inner.reset()
 
                 if global_step % cfg.logging_steps == 0:
                     self._log({
@@ -388,7 +423,9 @@ class GRPOTrainer:
 
                 if global_step % cfg.save_steps == 0:
                     self.save(os.path.join(cfg.output_dir, f"checkpoint-{global_step}"))
-
+    
+        pbar_inner.close()
+        pbar_main.close()
         self.save(os.path.join(cfg.output_dir, "final"))
         self.tb_writer.close() # <-- Ensure logs are flushed at the end
 
