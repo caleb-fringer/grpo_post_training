@@ -1,6 +1,6 @@
 """
 Optimized GRPO implementation with Eval Callbacks, Metrics Accumulation, 
-and Native TensorBoard Logging.
+Native TensorBoard Logging, and Token-Level Progress Bars.
 """
 
 from __future__ import annotations
@@ -16,8 +16,8 @@ import torch
 import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
-from torch.utils.tensorboard import SummaryWriter  # <-- Added TensorBoard import
-from transformers import PreTrainedModel, PreTrainedTokenizerBase
+from torch.utils.tensorboard import SummaryWriter
+from transformers import PreTrainedModel, PreTrainedTokenizerBase, LogitsProcessor, LogitsProcessorList
 from tqdm import tqdm
 
 try:
@@ -26,6 +26,15 @@ except ImportError:
     PeftModel = None  # type: ignore
 
 RewardFn = Callable[..., List[float]]
+
+# --- Custom Logits Processor for Token-Level Progress Tracking ---
+class TqdmLogitsProcessor(LogitsProcessor):
+    def __init__(self, pbar):
+        self.pbar = pbar
+
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
+        self.pbar.update(1)
+        return scores
 
 
 @dataclass
@@ -89,7 +98,6 @@ class GRPOTrainer:
         
         os.makedirs(self.cfg.output_dir, exist_ok=True)
         
-        # Initialize TensorBoard Writer
         tb_log_dir = os.path.join(self.cfg.output_dir, "logs")
         self.tb_writer = SummaryWriter(log_dir=tb_log_dir)
         print(f"[GRPO] TensorBoard logging initialized at: {tb_log_dir}")
@@ -166,7 +174,7 @@ class GRPOTrainer:
 
     # ───────────────────────────── sampling ───────────────────────────────
 
-    def _generate_group(self, prompt_ids, prompt_mask):
+    def _generate_group(self, prompt_ids, prompt_mask, pbar=None):
         G = self.cfg.num_generations
         prompt_ids = prompt_ids.repeat_interleave(G, dim=0)
         prompt_mask = prompt_mask.repeat_interleave(G, dim=0)
@@ -178,6 +186,10 @@ class GRPOTrainer:
         orig_cache = getattr(self.model.config, "use_cache", False)
         self.model.config.use_cache = True
         
+        processors = LogitsProcessorList()
+        if pbar is not None:
+            processors.append(TqdmLogitsProcessor(pbar))
+        
         with torch.no_grad():
             out = self.model.generate(
                 input_ids=prompt_ids,
@@ -188,6 +200,7 @@ class GRPOTrainer:
                 top_p=self.cfg.top_p,
                 pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=self.tokenizer.eos_token_id,
+                logits_processor=processors # <-- Attach the progress tracker here
             )
             
         self.model.config.use_cache = orig_cache
@@ -219,7 +232,6 @@ class GRPOTrainer:
             scores = fn(completions=completions_conv, **reward_kwargs)
             scores_t = torch.tensor(scores, dtype=torch.float32, device=self.device)
             total = total + scores_t
-            # Save under a 'rewards/' namespace for clean TensorBoard grouping
             per_fn[f"rewards/{fn.__name__}"] = scores_t.mean().item()
         return total, per_fn
 
@@ -250,14 +262,11 @@ class GRPOTrainer:
         return LambdaLR(optimizer, lr_lambda)
 
     def _log(self, payload: Dict[str, Any]):
-        """Logs to both console and TensorBoard"""
         step = payload.get("step", 0)
-        
-        # 1. Print compact payload to console
         compact = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in payload.items()}
+        # Must use tqdm.write to prevent visual artifacts with the bars
         tqdm.write(str(compact))
         
-        # 2. Push scalars to TensorBoard
         for k, v in payload.items():
             if k == "step": 
                 continue
@@ -266,7 +275,7 @@ class GRPOTrainer:
 
     def evaluate(self, step: int):
         if not self.eval_dataset: return
-        print(f"\n--- Running Evaluation at step {step} ---")
+        tqdm.write(f"\n--- Running Evaluation at step {step} ---")
         
         eval_slice = [self.eval_dataset[i] for i in range(min(200, len(self.eval_dataset)))]
         prompts = [r["prompt"] for r in eval_slice]
@@ -303,12 +312,11 @@ class GRPOTrainer:
         _, per_fn = self._score(all_texts, {"answer": answers})
         
         eval_metrics = {"step": step}
-        # Prefix with eval/ to group them together in TensorBoard
         for k, v in per_fn.items(): 
             eval_metrics[f"eval_{k}"] = v
             
         self._log(eval_metrics)
-        print("----------------------------------------\n")
+        tqdm.write("----------------------------------------\n")
 
     def train(self):
         cfg = self.cfg
@@ -332,25 +340,24 @@ class GRPOTrainer:
         accum_per_fn = collections.defaultdict(float)
         accum_reward = 0.0
 
-        # === MULTI-LEVEL PROGRESS BARS ===
-        # position=0 keeps this bar anchored at the top
-        pbar_main = tqdm(total=total_optim_steps, desc="Overall Training", position=0, unit="step")
-        # position=1 puts this bar underneath. leave=False clears it when training finishes
-        pbar_inner = tqdm(total=accum, desc="Current Step Phase", position=1, leave=False, unit="micro")
-
+        # === INIT MULTI-LEVEL PROGRESS BARS ===
+        pbar_main = tqdm(total=total_optim_steps, desc="Overall Training", position=0, unit="step", colour="green")
+        pbar_inner = tqdm(total=accum, desc="Micro-batches", position=1, leave=False, unit="micro", colour="blue")
 
         for epoch, rows in self._iter_batches():
             prompts = [r["prompt"] for r in rows]
             answers = [r["answer"] for r in rows]
-
             enc = self._tokenize_prompts(prompts)
 
-            # Phase: Generation
             pbar_inner.set_description("Phase: Generating")
-
+            
+            # Temporary 3rd bar just for generation progress
+            pbar_gen = tqdm(total=cfg.max_completion_length, desc="Tokens Generated", position=2, leave=False, colour="orange")
+            
             full_ids, completion_ids, completion_mask, full_mask, P = self._generate_group(
-                enc["input_ids"], enc["attention_mask"]
+                enc["input_ids"], enc["attention_mask"], pbar=pbar_gen
             )
+            pbar_gen.close()
 
             completion_texts = self.tokenizer.batch_decode(
                 completion_ids * completion_mask + (1 - completion_mask) * self.tokenizer.pad_token_id,
@@ -358,34 +365,28 @@ class GRPOTrainer:
             )
             answers_rep = [a for a in answers for _ in range(G)]
 
-            # Phase: Scoring
-            pbar_inner.update(1)
             pbar_inner.set_description("Phase: Scoring")
             rewards, per_fn = self._score(completion_texts, {"answer": answers_rep})
             advantages = self._group_advantages(rewards, G)
 
-            # Phase: Forward & Loss
-            pbar_inner.update(1)
             pbar_inner.set_description("Phase: Forward & Loss")
             new_logp = self._token_logprobs(self.model, full_ids, full_mask, P)
             old_logp = new_logp.detach()
             ref_logp = self._ref_logprobs(full_ids, full_mask, P)
 
             loss, metrics = self._grpo_loss(new_logp, old_logp, ref_logp, advantages, completion_mask)
-
-            # Phase: Backprop
-            pbar_inner.update(1)
+            
             pbar_inner.set_description("Phase: Backprop")
             (loss / accum).backward()
+            
             micro += 1
+            pbar_inner.update(1)
 
             for k, v in metrics.items(): accum_metrics[f"metrics/{k}"] += v / accum
             for k, v in per_fn.items(): accum_per_fn[k] += v / accum
             accum_reward += rewards.mean().item() / accum
 
-            pbar_inner.update(1)
             if micro % accum == 0:
-                pbar_inner.update(1)
                 pbar_inner.set_description("Phase: Optimizing")
                 grad_norm = torch.nn.utils.clip_grad_norm_(trainable, cfg.max_grad_norm)
                 optimizer.step()
@@ -393,15 +394,15 @@ class GRPOTrainer:
                 optimizer.zero_grad()
                 global_step += 1
 
-                # Advance the outer bar by 1 full step
                 pbar_main.update(1)
                 pbar_main.set_postfix({
                     "reward": f"{accum_reward:.3f}", 
                     "kl": f"{accum_metrics['metrics/kl']:.3f}"
                 })
-                
-                # Reset the inner bar for the next optimization step
-                pbar_inner.reset()
+
+                # FOOLPROOF RESET: Close and completely recreate the inner bar
+                pbar_inner.close()
+                pbar_inner = tqdm(total=accum, desc="Micro-batches", position=1, leave=False, unit="micro", colour="blue")
 
                 if global_step % cfg.logging_steps == 0:
                     self._log({
@@ -423,11 +424,11 @@ class GRPOTrainer:
 
                 if global_step % cfg.save_steps == 0:
                     self.save(os.path.join(cfg.output_dir, f"checkpoint-{global_step}"))
-    
+
         pbar_inner.close()
         pbar_main.close()
         self.save(os.path.join(cfg.output_dir, "final"))
-        self.tb_writer.close() # <-- Ensure logs are flushed at the end
+        self.tb_writer.close() 
 
     # ───────────────────────────── saving ─────────────────────────────────
 
@@ -435,4 +436,4 @@ class GRPOTrainer:
         os.makedirs(path, exist_ok=True)
         self.model.save_pretrained(path)
         self.tokenizer.save_pretrained(path)
-        print(f"[GRPO] saved to {path}")
+        tqdm.write(f"[GRPO] saved to {path}")
