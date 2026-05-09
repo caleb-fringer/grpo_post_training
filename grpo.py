@@ -100,7 +100,7 @@ class GRPOTrainer:
         
         tb_log_dir = os.path.join(self.cfg.output_dir, "logs")
         self.tb_writer = SummaryWriter(log_dir=tb_log_dir)
-        print(f"[GRPO] TensorBoard logging initialized at: {tb_log_dir}")
+        tqdm.write(f"[GRPO] TensorBoard logging initialized at: {tb_log_dir}")
         
         torch.manual_seed(self.cfg.seed)
 
