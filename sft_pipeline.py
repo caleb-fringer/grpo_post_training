@@ -7,7 +7,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default="./qwen_gentle_sft", help="Output directory")
     # TWEAK 1: Defaulting to 1 epoch for gentler training
     parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs")
-    parser.add_argument("--learning_rate", type=float, default=5e-5, help="Learning rate for SFT")
+    parser.add_argument("--learning_rate", type=float, default=5e-6, help="Learning rate for SFT")
     parser.add_argument("--batch_size", type=int, default=2, help="Per-device batch size")
     parser.add_argument("--grad_accum", type=int, default=4, help="Gradient accumulation steps")
     parser.add_argument("--neftune_alpha", type=float, default=5.0, help="NEFTune noise scale")
