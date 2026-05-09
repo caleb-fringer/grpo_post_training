@@ -1,36 +1,41 @@
 import os
 import sys
 import argparse
+from peft import PeftModel
 
-# 1. Ask for directory and reward params BEFORE doing heavy imports
+# 1. Ask for directory and parameters BEFORE doing heavy imports
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="GRPO Training Script")
     parser.add_argument("--output_dir", type=str, default=None, help="Directory to save checkpoints, logs, and config.")
     
-    # --- NEW: Reward Shaping Parameters ---
+    # --- Resume from checkpoint ---
+    parser.add_argument("--resume_from", type=str, default=None, help="Path to a previous run's checkpoint (e.g., ./runs/exp1/final) to continue training.")
+    
+    # Reward Shaping Parameters
     parser.add_argument("--reward_think", type=float, default=0.1, help="Reward for including <think> tags")
     parser.add_argument("--reward_box", type=float, default=0.1, help="Reward for including \\boxed{} tags")
     parser.add_argument("--reward_correct", type=float, default=1.0, help="Reward for a mathematically correct answer")
-    parser.add_argument("--reward_incorrect", type=float, default=0.0, help="Reward (or penalty) for an incorrect answer")
+    parser.add_argument("--reward_incorrect", type=float, default=0.0, help="Reward for an incorrect answer")
     
     args = parser.parse_args()
     
     TARGET_DIR = args.output_dir
+    RESUME_FROM = args.resume_from
+    
     if not TARGET_DIR:
-        TARGET_DIR = input("Please specify an output directory for this run (e.g., './runs/exp1'): ").strip()
+        TARGET_DIR = input("Please specify an output directory for this run (e.g., './runs/exp2'): ").strip()
         if not TARGET_DIR:
             print("Error: No output directory provided. Exiting.")
             sys.exit(1)
             
-    # Save parsed rewards to globals
     REWARD_THINK = args.reward_think
     REWARD_BOX = args.reward_box
     REWARD_CORRECT = args.reward_correct
     REWARD_INCORRECT = args.reward_incorrect
 
 else:
-    # Fallbacks if imported instead of run directly
     TARGET_DIR = "./fallback_dir"
+    RESUME_FROM = None
     REWARD_THINK = 0.1
     REWARD_BOX = 0.1
     REWARD_CORRECT = 1.0
@@ -164,7 +169,7 @@ def main(output_dir):
         "MAX_PROMPT_LEN": MAX_PROMPT_LEN,
         "MAX_COMPLETION_LEN": MAX_COMPLETION_LEN,
         "SYSTEM_PROMPT": SYSTEM_PROMPT,
-        # --- NEW: Dump reward parameters ---
+        "RESUME_FROM": RESUME_FROM,
         "REWARDS": {
             "reward_think": REWARD_THINK,
             "reward_box": REWARD_BOX,
@@ -188,12 +193,13 @@ def main(output_dir):
     train_ds = raw_train.map(to_prompt, remove_columns=raw_train.column_names)
     test_ds  = raw_test.map(to_prompt, remove_columns=raw_test.column_names)
     
-    print(f"Loading model and tokenizer from {SFT_MODEL_DIR}...")
+    print(f"Loading base model and tokenizer from {SFT_MODEL_DIR}...")
     tokenizer = AutoTokenizer.from_pretrained(SFT_MODEL_DIR)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
 
+    # We ALWAYS load the original base model first
     base_model = AutoModelForCausalLM.from_pretrained(
         SFT_MODEL_DIR, 
         dtype=torch.bfloat16, 
@@ -201,17 +207,25 @@ def main(output_dir):
     )
     base_model.config.use_cache = False
     
-    print("Initializing LoRA adapters...")
-    lora_config = LoraConfig(
-        r=16, 
-        lora_alpha=32, 
-        lora_dropout=0.0, 
-        bias="none", 
-        task_type="CAUSAL_LM",
-        target_modules=["q_proj","k_proj","v_proj","o_proj",
-                        "gate_proj","up_proj","down_proj"]
-    )
-    policy_model = get_peft_model(base_model, lora_config)
+    # --- NEW: Check if we are resuming or starting fresh ---
+    if RESUME_FROM:
+        print(f"Resuming training! Loading existing LoRA adapter from: {RESUME_FROM}")
+        from peft import PeftModel
+        # Load the previous adapter and ensure it is set up for further training
+        policy_model = PeftModel.from_pretrained(base_model, RESUME_FROM, is_trainable=True)
+    else:
+        print("Initializing fresh LoRA adapters...")
+        lora_config = LoraConfig(
+            r=16, 
+            lora_alpha=32, 
+            lora_dropout=0.0, 
+            bias="none", 
+            task_type="CAUSAL_LM",
+            target_modules=["q_proj","k_proj","v_proj","o_proj",
+                            "gate_proj","up_proj","down_proj"]
+        )
+        policy_model = get_peft_model(base_model, lora_config)
+        
     policy_model.gradient_checkpointing_enable()
 
     print("Configuring GRPO Trainer...")
