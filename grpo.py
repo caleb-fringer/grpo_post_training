@@ -9,6 +9,7 @@ import collections
 import gc
 import os
 import time
+import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
@@ -316,6 +317,22 @@ class GRPOTrainer:
             eval_metrics[f"eval_{k}"] = v
             
         self._log(eval_metrics)
+
+        # --- NEW: Save Evaluation Generations ---
+        import json # Local import or add to top of file
+        eval_results = []
+        for p, g, t in zip(prompts, answers, all_texts):
+            eval_results.append({
+                "prompt": p,
+                "gold_answer": g,
+                "generated_text": t
+            })
+            
+        eval_file_path = os.path.join(self.cfg.output_dir, f"eval_generations_step_{step}.json")
+        with open(eval_file_path, "w", encoding="utf-8") as f:
+            json.dump(eval_results, f, indent=4)
+            
+        tqdm.write(f"[GRPO] Saved evaluation generations to {eval_file_path}")
         tqdm.write("----------------------------------------\n")
 
     def train(self):

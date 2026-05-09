@@ -1,5 +1,7 @@
 import os
 import re
+import json
+import argparse
 import torch
 from datasets import load_dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -11,7 +13,6 @@ from grpo import GRPOConfig, GRPOTrainer
 
 # ── Configuration ────────────────────────────────────────────────────────────
 SFT_MODEL_DIR = "./qwen2.5-1.5b-sft-math-merged"             # <-- Point this to your local downloaded model
-OUTPUT_DIR    = "./grpo_output_local"
 
 DATASET_ID    = "openai/gsm8k"
 MAX_PROMPT_LEN     = 512
@@ -24,12 +25,12 @@ LOG_STEPS     = 1
 SAVE_STEPS    = 50
 EVAL_STEPS    = 50           # Evaluate against test set every 50 steps
 
-# Hyperparameters (Note: If you OOM on your RTX 4070, drop NUM_GENERATIONS to 4)
+# Hyperparameters
 NUM_GENERATIONS  = 6
 PER_DEVICE_BS    = 1         
 GRAD_ACCUM       = 8         
 LEARNING_RATE    = 4e-6      
-BETA             = 0.04      # Updated to 0.04 per the earlier fixes
+BETA             = 0.04      
 EPSILON          = 0.2
 MAX_GRAD_NORM    = 1.0
 
@@ -103,7 +104,36 @@ def correctness_reward(completions, answer, **kwargs):
     return rewards
 
 # ── Main Script ──────────────────────────────────────────────────────────────
-def main():
+def main(output_dir):
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Dump the run configuration for experiment tracking
+    run_config = {
+        "SFT_MODEL_DIR": SFT_MODEL_DIR,
+        "OUTPUT_DIR": output_dir,
+        "DATASET_ID": DATASET_ID,
+        "NUM_TRAIN": NUM_TRAIN,
+        "NUM_TEST": NUM_TEST,
+        "NUM_EPOCHS": NUM_EPOCHS,
+        "NUM_GENERATIONS": NUM_GENERATIONS,
+        "PER_DEVICE_BS": PER_DEVICE_BS,
+        "GRAD_ACCUM": GRAD_ACCUM,
+        "LEARNING_RATE": LEARNING_RATE,
+        "BETA": BETA,
+        "EPSILON": EPSILON,
+        "MAX_GRAD_NORM": MAX_GRAD_NORM,
+        "MAX_PROMPT_LEN": MAX_PROMPT_LEN,
+        "MAX_COMPLETION_LEN": MAX_COMPLETION_LEN,
+        "SYSTEM_PROMPT": SYSTEM_PROMPT,
+        "REWARD_FUNCTIONS": ["format_reward", "correctness_reward"]
+    }
+    
+    config_path = os.path.join(output_dir, "run_config.json")
+    with open(config_path, "w") as f:
+        json.dump(run_config, f, indent=4)
+    print(f"Run configuration saved to {config_path}")
+
     print(f"Loading dataset {DATASET_ID}...")
     raw_train = load_dataset(DATASET_ID, "main", split="train").shuffle(seed=42)
     raw_test  = load_dataset(DATASET_ID, "main", split="test").shuffle(seed=42)
@@ -131,7 +161,7 @@ def main():
     lora_config = LoraConfig(
         r=16, 
         lora_alpha=32, 
-        lora_dropout=0.0, # Updated to 0.0 per earlier bug fix!
+        lora_dropout=0.0, 
         bias="none", 
         task_type="CAUSAL_LM",
         target_modules=["q_proj","k_proj","v_proj","o_proj",
@@ -142,7 +172,7 @@ def main():
 
     print("Configuring GRPO Trainer...")
     cfg = GRPOConfig(
-        output_dir=OUTPUT_DIR,
+        output_dir=output_dir,
         per_device_batch_size=PER_DEVICE_BS,
         num_generations=NUM_GENERATIONS,
         grad_accumulation_steps=GRAD_ACCUM,
@@ -166,10 +196,23 @@ def main():
         eval_dataset=test_ds
     )
 
-    tb_logdir = os.path.join(OUTPUT_DIR, "logs")
+    tb_logdir = os.path.join(output_dir, "logs")
     print(f"Starting Training! To view metrics, open a separate terminal and run:")
     print(f"    tensorboard --logdir {tb_logdir}")
     trainer.train()
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="GRPO Training Script")
+    parser.add_argument("--output_dir", type=str, default=None, help="Directory to save checkpoints, logs, and config.")
+    
+    args = parser.parse_args()
+    
+    # Interactive fallback if the flag is missing
+    target_dir = args.output_dir
+    if not target_dir:
+        target_dir = input("Please specify an output directory for this run (e.g., './runs/exp1'): ").strip()
+        if not target_dir:
+            print("Error: No output directory provided. Exiting.")
+            exit(1)
+            
+    main(target_dir)
