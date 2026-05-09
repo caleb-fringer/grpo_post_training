@@ -1,0 +1,18 @@
+[project]
+name = "grpo_post_training"
+version = "0.1.0"
+description = "GRPO from first principles for fine-tuning LLMs on GSM8K"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "accelerate>=1.13.0",
+    "peft>=0.19.1",
+    "tensorboard>=2.20.0",
+    "torch>=2.11.0",
+    "transformers>=5.8.0",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
