@@ -369,7 +369,7 @@ class GRPOTrainer:
             pbar_inner.set_description("Phase: Generating")
             
             # Temporary 3rd bar just for generation progress
-            pbar_gen = tqdm(total=cfg.max_completion_length, desc="Tokens Generated", position=2, leave=False, colour="orange")
+            pbar_gen = tqdm(total=cfg.max_completion_length, desc="Tokens Generated", position=2, leave=False, colour="red")
             
             full_ids, completion_ids, completion_mask, full_mask, P = self._generate_group(
                 enc["input_ids"], enc["attention_mask"], pbar=pbar_gen
