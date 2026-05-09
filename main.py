@@ -1,7 +1,45 @@
 import os
+import sys
+import argparse
+
+# 1. Ask for directory and reward params BEFORE doing heavy imports
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="GRPO Training Script")
+    parser.add_argument("--output_dir", type=str, default=None, help="Directory to save checkpoints, logs, and config.")
+    
+    # --- NEW: Reward Shaping Parameters ---
+    parser.add_argument("--reward_think", type=float, default=0.1, help="Reward for including <think> tags")
+    parser.add_argument("--reward_box", type=float, default=0.1, help="Reward for including \\boxed{} tags")
+    parser.add_argument("--reward_correct", type=float, default=1.0, help="Reward for a mathematically correct answer")
+    parser.add_argument("--reward_incorrect", type=float, default=0.0, help="Reward (or penalty) for an incorrect answer")
+    
+    args = parser.parse_args()
+    
+    TARGET_DIR = args.output_dir
+    if not TARGET_DIR:
+        TARGET_DIR = input("Please specify an output directory for this run (e.g., './runs/exp1'): ").strip()
+        if not TARGET_DIR:
+            print("Error: No output directory provided. Exiting.")
+            sys.exit(1)
+            
+    # Save parsed rewards to globals
+    REWARD_THINK = args.reward_think
+    REWARD_BOX = args.reward_box
+    REWARD_CORRECT = args.reward_correct
+    REWARD_INCORRECT = args.reward_incorrect
+
+else:
+    # Fallbacks if imported instead of run directly
+    TARGET_DIR = "./fallback_dir"
+    REWARD_THINK = 0.1
+    REWARD_BOX = 0.1
+    REWARD_CORRECT = 1.0
+    REWARD_INCORRECT = 0.0
+
+print("Loading ML libraries... (This might take a minute over the Docker mount)")
+
 import re
 import json
-import argparse
 import torch
 from datasets import load_dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -81,8 +119,8 @@ def format_reward(completions, **kwargs):
     for c in completions:
         text = _to_text(c)
         score = 0.0
-        if THINK_RE.search(text): score += 0.1
-        if extract_boxed(text) is not None: score += 0.1
+        if THINK_RE.search(text): score += REWARD_THINK
+        if extract_boxed(text) is not None: score += REWARD_BOX
         rewards.append(score)
     return rewards
 
@@ -92,15 +130,15 @@ def correctness_reward(completions, answer, **kwargs):
         text = _to_text(c)
         pred = extract_boxed(text)
         if pred is None:
-            rewards.append(0.0)
+            rewards.append(REWARD_INCORRECT) # Penalize/score missing boxes as incorrect
             continue
         try:
             if verify(parse(pred), parse(ans)):
-                rewards.append(1.0)
+                rewards.append(REWARD_CORRECT)
             else:
-                rewards.append(0.0)
+                rewards.append(REWARD_INCORRECT)
         except Exception:
-            rewards.append(0.0)
+            rewards.append(REWARD_INCORRECT)
     return rewards
 
 # ── Main Script ──────────────────────────────────────────────────────────────
@@ -126,14 +164,20 @@ def main(output_dir):
         "MAX_PROMPT_LEN": MAX_PROMPT_LEN,
         "MAX_COMPLETION_LEN": MAX_COMPLETION_LEN,
         "SYSTEM_PROMPT": SYSTEM_PROMPT,
-        "REWARD_FUNCTIONS": ["format_reward", "correctness_reward"]
+        # --- NEW: Dump reward parameters ---
+        "REWARDS": {
+            "reward_think": REWARD_THINK,
+            "reward_box": REWARD_BOX,
+            "reward_correct": REWARD_CORRECT,
+            "reward_incorrect": REWARD_INCORRECT
+        }
     }
     
     config_path = os.path.join(output_dir, "run_config.json")
     with open(config_path, "w") as f:
         json.dump(run_config, f, indent=4)
     print(f"Run configuration saved to {config_path}")
-
+    
     print(f"Loading dataset {DATASET_ID}...")
     raw_train = load_dataset(DATASET_ID, "main", split="train").shuffle(seed=42)
     raw_test  = load_dataset(DATASET_ID, "main", split="test").shuffle(seed=42)
@@ -201,18 +245,4 @@ def main(output_dir):
     print(f"    tensorboard --logdir {tb_logdir}")
     trainer.train()
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="GRPO Training Script")
-    parser.add_argument("--output_dir", type=str, default=None, help="Directory to save checkpoints, logs, and config.")
-    
-    args = parser.parse_args()
-    
-    # Interactive fallback if the flag is missing
-    target_dir = args.output_dir
-    if not target_dir:
-        target_dir = input("Please specify an output directory for this run (e.g., './runs/exp1'): ").strip()
-        if not target_dir:
-            print("Error: No output directory provided. Exiting.")
-            exit(1)
-            
-    main(target_dir)
+
