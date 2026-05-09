@@ -14,3 +14,11 @@ more information.
 To run, you can either do `uv run main` or `source .venv/bin/activate && python3
 main.py`. The latter will activate the virtual environment in case you want to
 run other code samples.
+
+# TensorBoard
+To view metrics in realtime, you can run 
+`tensorboard --logdir grpo_output_local --port 6006` from the root of this 
+project to spin up a TensorBoard dashboard. If you're running the trainer
+on a remote server, you can port forward the dashboard by running 
+`ssh -N -L 6006:localhost:6006 <remote-ip>` and opening a web browser to
+localhost:6006.
