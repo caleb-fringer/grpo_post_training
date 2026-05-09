@@ -246,3 +246,5 @@ def main(output_dir):
     trainer.train()
 
 
+if __name__ == "__main__":
+    main(TARGET_DIR)
