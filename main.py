@@ -18,7 +18,7 @@ MAX_PROMPT_LEN     = 512
 MAX_COMPLETION_LEN = 768
 
 NUM_TRAIN     = 2000
-NUM_TEST      = 200          # 200-prompt slice for the Eval Callback
+NUM_TEST      = 500          # 500-prompt slice for the Eval Callback
 NUM_EPOCHS    = 1
 LOG_STEPS     = 1
 SAVE_STEPS    = 50
