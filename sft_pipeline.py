@@ -331,10 +331,7 @@ def main(output_dir):
     if NEFTUNE_ALPHA > 0:
         neftune_hook_handle.remove()
 
-    # 4. Post-Training Evaluation
-    evaluate_model(model, tokenizer, eval_dataset, tb_writer, phase_name="Post-Training", step=NUM_EPOCHS)
-
-    # 5. Merge LoRA and Save
+    # 4. Merge LoRA and Save
     print("\nMerging LoRA weights with base model...")
     merged_model = model.merge_and_unload()
     
