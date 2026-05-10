@@ -59,7 +59,7 @@ SFT_MODEL_DIR = "./qwen2.5-1.5b-sft_v2-math-merged"             # <-- Point this
 
 DATASET_ID    = "openai/gsm8k"
 MAX_PROMPT_LEN     = 512
-MAX_COMPLETION_LEN = 768
+MAX_COMPLETION_LEN = 1024 
 
 NUM_TRAIN     = 2000
 NUM_TEST      = 500          # 500-prompt slice for the Eval Callback
@@ -70,8 +70,8 @@ EVAL_STEPS    = 50           # Evaluate against test set every 50 steps
 
 # Hyperparameters
 NUM_GENERATIONS  = 6
-PER_DEVICE_BS    = 32        
-GRAD_ACCUM       = 1         
+PER_DEVICE_BS    = 4        
+GRAD_ACCUM       = 4         
 LEARNING_RATE    = 4e-6      
 BETA             = 0.04      
 EPSILON          = 0.2
