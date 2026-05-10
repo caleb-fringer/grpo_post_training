@@ -8,8 +8,8 @@ if __name__ == "__main__":
     # TWEAK 1: Defaulting to 1 epoch for gentler training
     parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs")
     parser.add_argument("--learning_rate", type=float, default=5e-6, help="Learning rate for SFT")
-    parser.add_argument("--batch_size", type=int, default=2, help="Per-device batch size")
-    parser.add_argument("--grad_accum", type=int, default=4, help="Gradient accumulation steps")
+    parser.add_argument("--batch_size", type=int, default=32, help="Per-device batch size")
+    parser.add_argument("--grad_accum", type=int, default=1, help="Gradient accumulation steps")
     parser.add_argument("--neftune_alpha", type=float, default=5.0, help="NEFTune noise scale")
     
     args = parser.parse_args()
@@ -23,9 +23,9 @@ if __name__ == "__main__":
 else:
     TARGET_DIR = "./fallback_dir"
     NUM_EPOCHS = 1
-    LEARNING_RATE = 5e-5
-    BATCH_SIZE = 2
-    GRAD_ACCUM = 4
+    LEARNING_RATE = 5e-6
+    BATCH_SIZE = 32
+    GRAD_ACCUM = 1
     NEFTUNE_ALPHA = 5.0
 
 print("Loading ML libraries... (This might take a minute)")
@@ -41,7 +41,7 @@ from torch.utils.tensorboard import SummaryWriter
 from math_verify import parse, verify
 
 # ── Configuration ────────────────────────────────────────────────────────────
-MODEL_ID = "Qwen/Qwen2.5-1.5B-Instruct"
+MODEL_ID = "Qwen/Qwen2.5-1.5B"
 MAX_SEQ_LEN = 768
 
 SYSTEM_PROMPT = (
@@ -189,7 +189,7 @@ def main(output_dir):
 
     base_model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device_map="auto"
     )
     base_model.config.use_cache = False
