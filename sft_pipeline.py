@@ -176,9 +176,10 @@ def evaluate_model(model, tokenizer, dataset, tb_writer, phase_name, step=0):
     if tb_writer:
         tb_writer.add_scalar(f"Accuracy/{phase_name}", accuracy, step)
     
-    # Restore cache use for training.
-    model.config.use_cache = orig_cache_setting
+    # Restore the original cache setting and return to training mode
+    model.config.use_cache = original_cache_setting
     model.train()
+    
     return accuracy
 
 # ── Main Script ──────────────────────────────────────────────────────────────
