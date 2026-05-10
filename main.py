@@ -202,7 +202,7 @@ def main(output_dir):
     # We ALWAYS load the original base model first
     base_model = AutoModelForCausalLM.from_pretrained(
         SFT_MODEL_DIR,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device_map="auto",
         attn_implementation="flash_attention_2",
     )
