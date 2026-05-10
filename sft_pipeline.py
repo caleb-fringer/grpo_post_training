@@ -144,6 +144,9 @@ def evaluate_model(model, tokenizer, dataset, tb_writer, phase_name, step=0):
     model.eval()
     correct = 0
     total = len(dataset)
+
+    orig_cache_setting = model.config.use_cache
+    model.config.use_cache = True
     
     for i, item in enumerate(tqdm(dataset, desc=f"Evaluating ({phase_name})")):
         prompt_text = tokenizer.apply_chat_template(item["prompt"], tokenize=False, add_generation_prompt=True)
@@ -173,6 +176,8 @@ def evaluate_model(model, tokenizer, dataset, tb_writer, phase_name, step=0):
     if tb_writer:
         tb_writer.add_scalar(f"Accuracy/{phase_name}", accuracy, step)
     
+    # Restore cache use for training.
+    model.config.use_cache = orig_cache_setting
     model.train()
     return accuracy
 
