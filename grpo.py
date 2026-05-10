@@ -146,7 +146,6 @@ class GRPOTrainer:
         return loss, metrics
 
     # ───────────────────────── log-prob computation ───────────────────────
-
     @staticmethod
     def _token_logprobs(model, full_ids, full_mask, completion_start) -> torch.Tensor:
         outputs = model(input_ids=full_ids, attention_mask=full_mask, use_cache=False)
@@ -155,26 +154,43 @@ class GRPOTrainer:
         target_ids = full_ids[:, completion_start:]                       
         target_logits = logits[:, completion_start - 1 : -1, :]           
 
-        gathered = target_logits.gather(-1, target_ids.unsqueeze(-1)).squeeze(-1)
-        token_logp = (gathered - target_logits.logsumexp(dim=-1)).float()
-        return token_logp  
+        # Using F.cross_entropy is vastly more memory-efficient than manual logsumexp
+        loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
+        
+        # Flatten inputs for cross_entropy: inputs [N, C], targets [N]
+        # Cross entropy computes -log(softmax), so we negate it to get logprobs
+        token_logp = -loss_fct(
+            target_logits.reshape(-1, target_logits.size(-1)), 
+            target_ids.reshape(-1)
+        ).view(target_ids.size(0), target_ids.size(1))
+        
+        return token_logp
 
     def _ref_logprobs(self, full_ids, full_mask, completion_start) -> torch.Tensor:
         was_training = self.model.training
         self.model.eval()
+        
+        chunk_size = 2 # Process 2 sequences at a time to save VRAM
+        all_logprobs = []
+        
         with torch.no_grad():
-            if self._is_peft:
-                with self.model.disable_adapter():
-                    res = self._token_logprobs(self.model, full_ids, full_mask, completion_start)
-            else:
-                res = self._token_logprobs(self.model, full_ids, full_mask, completion_start)
+            from contextlib import nullcontext
+            ctx = self.model.disable_adapter() if self._is_peft else nullcontext()
+            
+            with ctx:
+                for i in range(0, full_ids.size(0), chunk_size):
+                    chunk_ids = full_ids[i : i + chunk_size]
+                    chunk_mask = full_mask[i : i + chunk_size]
+                    chunk_logp = self._token_logprobs(self.model, chunk_ids, chunk_mask, completion_start)
+                    all_logprobs.append(chunk_logp)
+                    
+        res = torch.cat(all_logprobs, dim=0)
         
         if was_training:
             self.model.train()
         return res
 
     # ───────────────────────────── sampling ───────────────────────────────
-
     def _generate_group(self, prompt_ids, prompt_mask, pbar=None):
         G = self.cfg.num_generations
         prompt_ids = prompt_ids.repeat_interleave(G, dim=0)
@@ -375,6 +391,9 @@ class GRPOTrainer:
                 enc["input_ids"], enc["attention_mask"], pbar=pbar_gen
             )
             pbar_gen.close()
+
+            # Clear cache to save memory.
+            torch.cuda.empty_cache()
 
             completion_texts = self.tokenizer.batch_decode(
                 completion_ids * completion_mask + (1 - completion_mask) * self.tokenizer.pad_token_id,
