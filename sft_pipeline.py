@@ -306,8 +306,30 @@ def main(output_dir):
                 optimizer.zero_grad()
 
                 global_step += 1
+                
+                # --- ADDED: Track Learning Rate ---
+                current_lr = optimizer.param_groups[0]['lr']
+                tb_writer.add_scalar("Learning_Rate/train", current_lr, global_step)
+                
+                # --- EXISTING: Track Loss ---
                 tb_writer.add_scalar("Loss/train", loss.item() * GRAD_ACCUM, global_step)
-                progress_bar.set_postfix({"loss": f"{loss.item() * GRAD_ACCUM:.4f}"})
+                
+                # Updated progress bar to show LR alongside loss
+                progress_bar.set_postfix({
+                    "loss": f"{loss.item() * GRAD_ACCUM:.4f}", 
+                    "lr": f"{current_lr:.2e}"
+                })
+
+        # --- ADDED: Evaluate and log accuracy at the end of each epoch ---
+        # This will plot your accuracy curve over time in TensorBoard
+        evaluate_model(
+            model, 
+            tokenizer, 
+            eval_dataset, 
+            tb_writer, 
+            phase_name=f"Epoch_{epoch + 1}", 
+            step=global_step
+        )
 
     # Cleanup TWEAK 4 Hook
     if NEFTUNE_ALPHA > 0:
