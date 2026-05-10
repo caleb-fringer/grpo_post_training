@@ -55,7 +55,7 @@ from math_verify import parse, verify
 from grpo import GRPOConfig, GRPOTrainer
 
 # ── Configuration ────────────────────────────────────────────────────────────
-SFT_MODEL_DIR = "./qwen2.5-1.5b-sft_v2-math-merged"             # <-- Point this to your local downloaded model
+SFT_MODEL_DIR = "./qwen2.5-1.5b-sft_v4_base-merged"             # <-- Point this to your local downloaded model
 
 DATASET_ID    = "openai/gsm8k"
 MAX_PROMPT_LEN     = 512
