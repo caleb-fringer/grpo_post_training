@@ -27,3 +27,5 @@ hf_cache/
 .vscode/
 .idea/
 *.swp
+
+runs/
