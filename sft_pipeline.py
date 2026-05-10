@@ -6,11 +6,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Gentle SFT Training Script (No TRL)")
     parser.add_argument("--output_dir", type=str, default="./qwen_gentle_sft", help="Output directory")
     # TWEAK 1: Defaulting to 1 epoch for gentler training
-    parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs")
-    parser.add_argument("--learning_rate", type=float, default=5e-6, help="Learning rate for SFT")
-    parser.add_argument("--batch_size", type=int, default=32, help="Per-device batch size")
+    parser.add_argument("--epochs", type=int, default=2, help="Number of training epochs")
+    parser.add_argument("--learning_rate", type=float, default=2e-5, help="Learning rate for SFT")
+    parser.add_argument("--batch_size", type=int, default=64, help="Per-device batch size")
     parser.add_argument("--grad_accum", type=int, default=1, help="Gradient accumulation steps")
     parser.add_argument("--neftune_alpha", type=float, default=5.0, help="NEFTune noise scale")
+    parser.add_argument("--skip_baseline", type=bool, default=False, help="Skip evaluating baseline model")
     
     args = parser.parse_args()
     TARGET_DIR = args.output_dir
@@ -19,12 +20,13 @@ if __name__ == "__main__":
     BATCH_SIZE = args.batch_size
     GRAD_ACCUM = args.grad_accum
     NEFTUNE_ALPHA = args.neftune_alpha
+    SKIP_BASELINE = args.skip_baseline
 
 else:
     TARGET_DIR = "./fallback_dir"
     NUM_EPOCHS = 1
-    LEARNING_RATE = 5e-6
-    BATCH_SIZE = 32
+    LEARNING_RATE = 2e-5
+    BATCH_SIZE = 64 
     GRAD_ACCUM = 1
     NEFTUNE_ALPHA = 5.0
 
@@ -249,15 +251,15 @@ def main(output_dir):
         collate_fn=lambda features: custom_collate_fn(features, tokenizer)
     )
 
-    # 1. Baseline Evaluation
-    evaluate_model(base_model, tokenizer, eval_dataset, tb_writer, phase_name="Baseline", step=0)
+    if not SKIP_BASELINE:
+        # 1. Baseline Evaluation
+        evaluate_model(base_model, tokenizer, eval_dataset, tb_writer, phase_name="Baseline", step=0)
 
     # 2. Setup LoRA
-    # TWEAK 2: Reduced LoRA Rank (r=8) and Alpha (16)
-    print("\nInitializing fresh LoRA adapters (TWEAK 2: rank=8, alpha=16)...")
+    print("\nInitializing fresh LoRA adapters...")
     lora_config = LoraConfig(
-        r=8,
-        lora_alpha=16,
+        r=32,
+        lora_alpha=64,
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
