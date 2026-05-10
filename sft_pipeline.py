@@ -8,7 +8,7 @@ if __name__ == "__main__":
     # TWEAK 1: Defaulting to 1 epoch for gentler training
     parser.add_argument("--epochs", type=int, default=2, help="Number of training epochs")
     parser.add_argument("--learning_rate", type=float, default=2e-5, help="Learning rate for SFT")
-    parser.add_argument("--batch_size", type=int, default=64, help="Per-device batch size")
+    parser.add_argument("--batch_size", type=int, default=32, help="Per-device batch size")
     parser.add_argument("--grad_accum", type=int, default=1, help="Gradient accumulation steps")
     parser.add_argument("--neftune_alpha", type=float, default=5.0, help="NEFTune noise scale")
     parser.add_argument("--skip_baseline", type=bool, default=False, help="Skip evaluating baseline model")
@@ -26,7 +26,7 @@ else:
     TARGET_DIR = "./fallback_dir"
     NUM_EPOCHS = 1
     LEARNING_RATE = 2e-5
-    BATCH_SIZE = 64 
+    BATCH_SIZE = 32 
     GRAD_ACCUM = 1
     NEFTUNE_ALPHA = 5.0
 
