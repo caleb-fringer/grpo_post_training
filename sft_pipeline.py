@@ -139,19 +139,40 @@ def add_neftune_hook(model, noise_alpha=5.0):
     return embeds_layer.register_forward_hook(neftune_forward_hook)
 
 # ── Evaluation ───────────────────────────────────────────────────────────────
-def evaluate_model(model, tokenizer, dataset, tb_writer, phase_name, step=0):
+def evaluate_model(model, tokenizer, dataset, tb_writer, phase_name, step=0, batch_size=16):
     print(f"\n--- Starting {phase_name} Evaluation ---")
     model.eval()
+    
+    # 1. Enable KV Cache for fast generation
+    original_cache_setting = model.config.use_cache
+    model.config.use_cache = True 
+    
     correct = 0
     total = len(dataset)
-
-    orig_cache_setting = model.config.use_cache
-    model.config.use_cache = True
     
-    for i, item in enumerate(tqdm(dataset, desc=f"Evaluating ({phase_name})")):
-        prompt_text = tokenizer.apply_chat_template(item["prompt"], tokenize=False, add_generation_prompt=True)
-        inputs = tokenizer(prompt_text, return_tensors="pt").to(model.device)
+    # 2. Iterate through the dataset in chunks
+    for i in tqdm(range(0, total, batch_size), desc=f"Evaluating ({phase_name})"):
+        # Hugging Face datasets return a dictionary of lists when sliced
+        batch_items = dataset[i : i + batch_size]
+        prompts = batch_items["prompt"]
+        ground_truths = batch_items["answer"]
         
+        # Apply the chat template to every prompt in the batch
+        prompt_texts = [
+            tokenizer.apply_chat_template(p, tokenize=False, add_generation_prompt=True) 
+            for p in prompts
+        ]
+        
+        # Tokenize and pad the batch (relies on padding_side="left" set in main)
+        inputs = tokenizer(
+            prompt_texts, 
+            return_tensors="pt", 
+            padding=True, 
+            truncation=True, 
+            max_length=MAX_SEQ_LEN
+        ).to(model.device)
+        
+        # 3. Generate answers for the whole batch at once
         with torch.no_grad():
             outputs = model.generate(
                 **inputs, 
@@ -160,15 +181,21 @@ def evaluate_model(model, tokenizer, dataset, tb_writer, phase_name, step=0):
                 do_sample=False
             )
         
-        generated_text = tokenizer.decode(outputs[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
-        pred = extract_boxed(generated_text)
-        gt = item["answer"]
+        # 4. Isolate only the newly generated tokens
+        input_length = inputs["input_ids"].shape[1]
+        generated_tokens = outputs[:, input_length:]
         
-        try:
-            if pred and verify(parse(pred), parse(gt)):
-                correct += 1
-        except Exception:
-            pass
+        # Decode the batch
+        generated_texts = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
+        
+        # 5. Verify the results
+        for gen_text, gt in zip(generated_texts, ground_truths):
+            pred = extract_boxed(gen_text)
+            try:
+                if pred and verify(parse(pred), parse(gt)):
+                    correct += 1
+            except Exception:
+                pass
 
     accuracy = correct / total
     print(f"{phase_name} Accuracy: {correct}/{total} ({accuracy:.2%})")
