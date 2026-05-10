@@ -201,9 +201,10 @@ def main(output_dir):
 
     # We ALWAYS load the original base model first
     base_model = AutoModelForCausalLM.from_pretrained(
-        SFT_MODEL_DIR, 
-        dtype=torch.bfloat16, 
-        device_map="auto"
+        SFT_MODEL_DIR,
+        dtype=torch.bfloat16,
+        device_map="auto",
+        attn_implementation="flash_attention_2",
     )
     base_model.config.use_cache = False
     

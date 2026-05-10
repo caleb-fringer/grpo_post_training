@@ -6,6 +6,7 @@ Native TensorBoard Logging, and Token-Level Progress Bars.
 from __future__ import annotations
 
 import collections
+import contextlib
 import gc
 import os
 import time
@@ -96,6 +97,7 @@ class GRPOTrainer:
 
         self.device = next(model.parameters()).device
         self._is_peft = PeftModel is not None and isinstance(model, PeftModel)
+        self.scaler = torch.cuda.amp.GradScaler() if self.cfg.fp16 and torch.cuda.is_available() else None
         
         os.makedirs(self.cfg.output_dir, exist_ok=True)
         
@@ -387,14 +389,17 @@ class GRPOTrainer:
             advantages = self._group_advantages(rewards, G)
 
             pbar_inner.set_description("Phase: Forward & Loss")
-            new_logp = self._token_logprobs(self.model, full_ids, full_mask, P)
-            old_logp = new_logp.detach()
-            ref_logp = self._ref_logprobs(full_ids, full_mask, P)
+            with torch.cuda.amp.autocast(dtype=torch.bfloat16) if self.scaler is not None else contextlib.nullcontext():
+                new_logp = self._token_logprobs(self.model, full_ids, full_mask, P)
+                old_logp = new_logp.detach()
+                ref_logp = self._ref_logprobs(full_ids, full_mask, P)
+                loss, metrics = self._grpo_loss(new_logp, old_logp, ref_logp, advantages, completion_mask)
 
-            loss, metrics = self._grpo_loss(new_logp, old_logp, ref_logp, advantages, completion_mask)
-            
             pbar_inner.set_description("Phase: Backprop")
-            (loss / accum).backward()
+            if self.scaler is not None:
+                self.scaler.scale(loss / accum).backward()
+            else:
+                (loss / accum).backward()
             
             micro += 1
             pbar_inner.update(1)
@@ -405,8 +410,14 @@ class GRPOTrainer:
 
             if micro % accum == 0:
                 pbar_inner.set_description("Phase: Optimizing")
+                if self.scaler is not None:
+                    self.scaler.unscale_(optimizer)
                 grad_norm = torch.nn.utils.clip_grad_norm_(trainable, cfg.max_grad_norm)
-                optimizer.step()
+                if self.scaler is not None:
+                    self.scaler.step(optimizer)
+                    self.scaler.update()
+                else:
+                    optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
                 global_step += 1

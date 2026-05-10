@@ -225,7 +225,8 @@ def main(output_dir):
     base_model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
         dtype=torch.bfloat16,
-        device_map="auto"
+        device_map="auto",
+        attn_implementation="flash_attention_2",
     )
     base_model.config.use_cache = False
 
@@ -278,29 +279,32 @@ def main(output_dir):
     print(f"\nStarting Custom Training Loop! Tensorboard logs at: {os.path.join(output_dir, 'logs')}")
     
     optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
+    scaler = torch.cuda.amp.GradScaler()
     global_step = 0
-    
+
     model.train()
     for epoch in range(NUM_EPOCHS):
         print(f"\n--- Epoch {epoch + 1}/{NUM_EPOCHS} ---")
-        
+
         progress_bar = tqdm(train_dataloader, desc="Training")
         optimizer.zero_grad()
-        
+
         for step, batch in enumerate(progress_bar):
             input_ids = batch["input_ids"].to(model.device)
             labels = batch["labels"].to(model.device)
             attention_mask = batch["attention_mask"].to(model.device)
-            
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-            loss = outputs.loss / GRAD_ACCUM
-            
-            loss.backward()
-            
+
+            with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+                loss = outputs.loss / GRAD_ACCUM
+
+            scaler.scale(loss).backward()
+
             if (step + 1) % GRAD_ACCUM == 0 or (step + 1) == len(train_dataloader):
-                optimizer.step()
+                scaler.step(optimizer)
+                scaler.update()
                 optimizer.zero_grad()
-                
+
                 global_step += 1
                 tb_writer.add_scalar("Loss/train", loss.item() * GRAD_ACCUM, global_step)
                 progress_bar.set_postfix({"loss": f"{loss.item() * GRAD_ACCUM:.4f}"})
