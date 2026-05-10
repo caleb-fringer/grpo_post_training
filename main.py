@@ -70,8 +70,8 @@ EVAL_STEPS    = 50           # Evaluate against test set every 50 steps
 
 # Hyperparameters
 NUM_GENERATIONS  = 6
-PER_DEVICE_BS    = 1         
-GRAD_ACCUM       = 8         
+PER_DEVICE_BS    = 32        
+GRAD_ACCUM       = 1         
 LEARNING_RATE    = 4e-6      
 BETA             = 0.04      
 EPSILON          = 0.2
