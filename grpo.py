@@ -367,7 +367,6 @@ class GRPOTrainer:
 
         global_step = 0
         micro = 0
-        t0 = time.time()
 
         accum_metrics = collections.defaultdict(float)
         accum_per_fn = collections.defaultdict(float)

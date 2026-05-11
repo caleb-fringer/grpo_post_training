@@ -24,6 +24,7 @@ from the root of this project to spin up a TensorBoard dashboard. If you're
 running the trainer on a remote server, you can port forward the dashboard by 
 running `ssh -N -L 6006:localhost:6006 <remote-ip>` and opening a web browser 
 to localhost:6006.
+
 # Supervised Fine Tuning Pipeline
 `sft_pipeline.py` is responsible for downloading a model from HuggingFace,
 settting up LoRA, and performing SFT to teach the model the format of gsm8k
@@ -66,6 +67,19 @@ can be changed. These are as follows:
 - `SYSTEM_PROMPT`: The instruction prompt given to the base model.
 
 # Reinforcement Learning Pipeline
+## grpo.py
+This file implements GRPO algorithm in PyTorch. It is configurable via
+the GRPOConfig class, which provides parameters for the GRPO learning algorithm,
+parameters passed to the LLM for controlling prompt outputs, and step values to
+control when the algorithm logs metrics, saves checkpoint models, evaluates the
+model on the training set, and the random seed.
+
+By default, the GRPOTrainer receives a GRPOConfig that will train for a single
+epoch (2000 time prompts) and evaluate + checkpoint every 50 timesteps. The
+hyperparameters in this config correspond 1:1 with those passed to `main.py`,
+although this class also provides additonal hyperparameters.
+
+## main.py
 `main.py` defines the main GRPO-based RL pipeline. It will load the merged SFT
 model from the SFT pipeline and begin training it via GRPO. It supports the
 following arguments:
@@ -114,5 +128,4 @@ can be changed. These are as follows:
 This GRPO pipeline depends on the SFT trained version of Qwen2.5-1.5b. Make sure
 you train a fine-tuned model using the `sft_pipeline.py` script, and point the
 `SFT_MODEL_DIR` param in `main.py` to the relative path of this model dir.
-
 
