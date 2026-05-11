@@ -125,6 +125,8 @@ class GRPOTrainer:
         policy_obj = torch.min(unclipped, clipped)
 
         log_ref_minus_pi = ref_logp - new_logp
+        # KL divergence from the start of training.
+        # This is just used as a metric for logging.
         kl = log_ref_minus_pi.exp() - log_ref_minus_pi - 1.0
 
         per_token = policy_obj - self.cfg.beta * kl
@@ -146,6 +148,7 @@ class GRPOTrainer:
         return loss, metrics
 
     # ───────────────────────── log-prob computation ───────────────────────
+
     @staticmethod
     def _token_logprobs(model, full_ids, full_mask, completion_start) -> torch.Tensor:
         outputs = model(input_ids=full_ids, attention_mask=full_mask, use_cache=False)
@@ -191,6 +194,7 @@ class GRPOTrainer:
         return res
 
     # ───────────────────────────── sampling ───────────────────────────────
+
     def _generate_group(self, prompt_ids, prompt_mask, pbar=None):
         G = self.cfg.num_generations
         prompt_ids = prompt_ids.repeat_interleave(G, dim=0)
@@ -200,6 +204,8 @@ class GRPOTrainer:
         was_training = self.model.training
         self.model.eval()
         
+        # We can use the cached K,V for generating the prompt responses to save
+        # a lot of computation time recalculating the exact same K,V
         orig_cache = getattr(self.model.config, "use_cache", False)
         self.model.config.use_cache = True
         
@@ -220,6 +226,7 @@ class GRPOTrainer:
                 logits_processor=processors # <-- Attach the progress tracker here
             )
             
+        # Restore cache usage.
         self.model.config.use_cache = orig_cache
         if was_training:
             self.model.train()
@@ -302,6 +309,7 @@ class GRPOTrainer:
         all_texts = []
         
         self.model.eval()
+        # Again enable caching to speed up computation time of generating responses.
         orig_cache = getattr(self.model.config, "use_cache", False)
         self.model.config.use_cache = True
         
@@ -334,8 +342,7 @@ class GRPOTrainer:
             
         self._log(eval_metrics)
 
-        # --- NEW: Save Evaluation Generations ---
-        import json # Local import or add to top of file
+        # --- Save Evaluation Generations ---
         eval_results = []
         for p, g, t in zip(prompts, answers, all_texts):
             eval_results.append({
