@@ -207,7 +207,7 @@ def main(output_dir):
     )
     base_model.config.use_cache = False
     
-    # --- NEW: Check if we are resuming or starting fresh ---
+    # --- Check if we are resuming or starting fresh ---
     if RESUME_FROM:
         print(f"Resuming training! Loading existing LoRA adapter from: {RESUME_FROM}")
         from peft import PeftModel

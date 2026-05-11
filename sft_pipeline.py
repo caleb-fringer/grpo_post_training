@@ -5,7 +5,6 @@ import argparse
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Gentle SFT Training Script (No TRL)")
     parser.add_argument("--output_dir", type=str, default="./qwen_gentle_sft", help="Output directory")
-    # TWEAK 1: Defaulting to 1 epoch for gentler training
     parser.add_argument("--epochs", type=int, default=2, help="Number of training epochs")
     parser.add_argument("--learning_rate", type=float, default=2e-5, help="Learning rate for SFT")
     parser.add_argument("--batch_size", type=int, default=32, help="Per-device batch size")
@@ -77,11 +76,11 @@ def format_eval_example(ex):
         "answer": final_answer,
     }
 
-# ── TWEAK 3: Custom SFT Tokenization & Masking ──────────────────────────────
+# ── Custom SFT Tokenization & Masking ──────────────────────────────
 def tokenize_and_mask(ex, tokenizer):
     """
-    TWEAK 3: We strictly mask the user prompt so the model only calculates
-    loss on its generated answer, preventing it from 'forgetting' how to read prompts.
+    We strictly mask the user prompt so the model only calculates loss on its 
+    generated answer, preventing it from 'forgetting' how to read prompts.
     """
     parts = str(ex["answer"]).split("####")
     reasoning = parts[0].strip()
@@ -119,7 +118,7 @@ def custom_collate_fn(features, tokenizer):
     
     return {"input_ids": input_ids, "labels": labels, "attention_mask": attention_mask}
 
-# ── TWEAK 4: Custom NEFTune Hook ─────────────────────────────────────────────
+# ── NEFTune Hook ─────────────────────────────────────────────
 def add_neftune_hook(model, noise_alpha=5.0):
     """
     Dynamically adds uniform noise to the embedding layer during training.
@@ -235,8 +234,8 @@ def main(output_dir):
     
     eval_dataset = raw_test.select(range(500)).map(format_eval_example, remove_columns=raw_test.column_names)
     
-    # TWEAK 1: Subsample the training data down to 1000 examples
-    print("TWEAK 1: Subsampling the training dataset to 1,000 examples...")
+    # Subsample the training data down to 1000 examples
+    print("Subsampling the training dataset to 1,000 examples...")
     raw_train = raw_train.shuffle(seed=42).select(range(1000))
     
     train_dataset = raw_train.map(
@@ -269,13 +268,13 @@ def main(output_dir):
     model = get_peft_model(base_model, lora_config)
     model.gradient_checkpointing_enable()
 
-    # TWEAK 4: Enable NEFTune via Forward Hook
+    # Enable NEFTune via Forward Hook
     if NEFTUNE_ALPHA > 0:
-        print(f"\nTWEAK 4: Activating NEFTune embedding noise (alpha={NEFTUNE_ALPHA})...")
+        print(f"\nActivating NEFTune embedding noise (alpha={NEFTUNE_ALPHA})...")
         neftune_hook_handle = add_neftune_hook(model, noise_alpha=NEFTUNE_ALPHA)
 
-    # 3. Custom PyTorch Training Loop
-    print(f"\nStarting Custom Training Loop! Tensorboard logs at: {os.path.join(output_dir, 'logs')}")
+    # 3. PyTorch Training Loop
+    print(f"\nStarting Training Loop! Tensorboard logs at: {os.path.join(output_dir, 'logs')}")
     
     optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
     global_step = 0
@@ -303,21 +302,20 @@ def main(output_dir):
                 
                 global_step += 1
                 
-                # --- ADDED: Track Learning Rate ---
+                # --- Track Learning Rate ---
                 current_lr = optimizer.param_groups[0]['lr']
                 tb_writer.add_scalar("Learning_Rate/train", current_lr, global_step)
                 
-                # --- EXISTING: Track Loss ---
+                # --- Track Loss ---
                 tb_writer.add_scalar("Loss/train", loss.item() * GRAD_ACCUM, global_step)
                 
-                # Updated progress bar to show LR alongside loss
+                # Show LR alongside loss
                 progress_bar.set_postfix({
                     "loss": f"{loss.item() * GRAD_ACCUM:.4f}", 
                     "lr": f"{current_lr:.2e}"
                 })
 
-        # --- ADDED: Evaluate and log accuracy at the end of each epoch ---
-        # This will plot your accuracy curve over time in TensorBoard
+        # --- Evaluate and log accuracy at the end of each epoch ---
         evaluate_model(
             model, 
             tokenizer, 
@@ -327,7 +325,7 @@ def main(output_dir):
             step=global_step
         )
 
-    # Cleanup TWEAK 4 Hook
+    # Cleanup NEFTune Hook
     if NEFTUNE_ALPHA > 0:
         neftune_hook_handle.remove()
 
